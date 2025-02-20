@@ -35,21 +35,10 @@ def rhs(Y, p, t):
 initial_condition = np.array([1.0, 1.0, 1.0])
 
 #%% Solve system
-output_file = os.path.join(datadir, 'data.h5')
-fl = h5.File(output_file, 'w', libver='latest')
-fl.swmr_mode = True
-
-# Setup HDF5 datasets
-fields = fl.create_group('fields')
-fields.create_dataset('t', data=np.linspace(t0, t1, int((t1-t0)/dtstep)+1))
-fields.create_dataset('xyz', shape=(int((t1-t0)/dtstep)+1, len(initial_condition)), dtype=np.float64)
-fields['xyz'][0] = initial_condition
-
-# Solvers: Tsit5, RK4, RK8, Euler
-solver = GenSolver('RK4', rhs, t0, initial_condition, t1, dtstep=dtstep, params=params)
-final_state = solver.run(fl)
-
-fl.close()
+solver = GenSolver('Tsit5', rhs, t0, initial_condition, t1,
+                  dtstep=dtstep, datadir=datadir, imdir=imdir,
+                  params=params)
+final_state = solver.run()
 
 #%% Plot results
 with h5.File(os.path.join(datadir, 'data.h5'), 'r') as f:
@@ -59,25 +48,25 @@ with h5.File(os.path.join(datadir, 'data.h5'), 'r') as f:
 # Create 3D phase space plot
 fig = plt.figure(figsize=(10, 8))
 ax = fig.add_subplot(111, projection='3d')
-ax.plot(xyz[:, 0], xyz[:, 1], xyz[:, 2], lw=0.5, color='blue')
+ax.plot(xyz[:, 0], xyz[:, 1], xyz[:, 2], lw=0.5)
 ax.set_xlabel('x')
 ax.set_ylabel('y')
 ax.set_zlabel('z')
 ax.set_title('Lorenz Attractor')
-plt.savefig(os.path.join(imdir, 'lorenz_attractor.png'), dpi=600, bbox_inches='tight')
-plt.close(fig)
+plt.savefig(os.path.join(imdir, 'lorenz_attractor.png'), dpi=600)
+plt.close()
 
 # Plot time series
 fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 8))
-ax1.plot(t, xyz[:, 0], color='red')
+ax1.plot(t, xyz[:, 0])
 ax1.set_ylabel('x(t)')
-ax2.plot(t, xyz[:, 1], color='green')
+ax2.plot(t, xyz[:, 1])
 ax2.set_ylabel('y(t)')
-ax3.plot(t, xyz[:, 2], color='purple')
+ax3.plot(t, xyz[:, 2])
 ax3.set_ylabel('z(t)')
 ax3.set_xlabel('t')
 plt.tight_layout()
-plt.savefig(os.path.join(imdir, 'lorenz_timeseries.png'), dpi=600, bbox_inches='tight')
-plt.close(fig)
+plt.savefig(os.path.join(imdir, 'lorenz_timeseries.png'), dpi=600)
+plt.close()
 
 print("Plots saved")

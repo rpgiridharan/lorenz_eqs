@@ -1,8 +1,6 @@
 import numpy as np
 from juliacall import Main as jl
-import h5py as h5
 import os
-import matplotlib.pyplot as plt
 
 class GenSolver:
     def __init__(self, solver_type, rhs, t0, initial_condition, t1, **kwargs):
@@ -15,8 +13,6 @@ class GenSolver:
             t1 (float): Final time
             **kwargs: Additional parameters including:
                 - dtstep: time step for integration
-                - datadir: directory for saving data
-                - imdir: directory for saving images
                 - params: dictionary of parameters for RHS function
         """
         self.solver_type = solver_type
@@ -27,13 +23,7 @@ class GenSolver:
         
         # Set defaults for optional parameters
         self.dtstep = kwargs.get('dtstep', 0.01)
-        self.datadir = kwargs.get('datadir', 'data/')
-        self.imdir = kwargs.get('imdir', 'images/')
         self.params = kwargs.get('params', {})
-        
-        # Create directories
-        os.makedirs(self.datadir, exist_ok=True)
-        os.makedirs(self.imdir, exist_ok=True)
         
         # Calculate number of time steps
         self.Nt = int((t1 - t0)/self.dtstep) + 1
@@ -66,42 +56,38 @@ class GenSolver:
         end
         """)
 
-    def run(self):
-        """Run the simulation"""
+    def run(self, fl):
+        """Run the simulation
+        Args:
+            fl: Open HDF5 file handle with write access
+        """
         # Initialize solution storage
         Y_current = self.initial_condition
+        fields = fl['fields']
         
-        # Create HDF5 file
-        with h5.File(os.path.join(self.datadir, 'data.h5'), 'w') as fl:
-            fields = fl.create_group('fields')
-            fields.create_dataset('t', data=np.linspace(self.t0, self.t1, self.Nt))
-            fields.create_dataset('xyz', shape=(self.Nt, len(self.initial_condition)), dtype=np.float64)
-            fields['xyz'][0] = Y_current
+        # Time stepping loop
+        for i in range(self.Nt-1):
+            t = self.t0 + i * self.dtstep
+            tspan_current = (t, t + self.dtstep)
             
-            # Time stepping loop
-            for i in range(self.Nt-1):
-                t = self.t0 + i * self.dtstep
-                tspan_current = (t, t + self.dtstep)
-                
-                # Pass current state to Julia
-                jl.tspan = tspan_current
-                jl.Y_current = Y_current
-                
-                # Solve one time step
-                jl.seval(f"""
-                Y0_current = pyconvert(Vector{{Float64}}, Y_current)
-                prob = ODEProblem(rhs_wrapper!, Y0_current, tspan, nothing)
-                sol = solve(prob, {self.solver_type}())
-                final_state = sol.u[end]
-                """)
-                
-                # Get solution and save
-                Y_current = np.array(jl.seval("final_state"))
-                fields['xyz'][i+1] = Y_current
-                fl.flush()
-                
-                if (i+1) % 100 == 0:
-                    print(f"Completed time step {i+1}/{self.Nt-1}, t = {t + self.dtstep:.3f}")
+            # Pass current state to Julia
+            jl.tspan = tspan_current
+            jl.Y_current = Y_current
+            
+            # Solve one time step
+            jl.seval(f"""
+            Y0_current = pyconvert(Vector{{Float64}}, Y_current)
+            prob = ODEProblem(rhs_wrapper!, Y0_current, tspan, nothing)
+            sol = solve(prob, {self.solver_type}())
+            final_state = sol.u[end]
+            """)
+            
+            # Get solution and save
+            Y_current = np.array(jl.seval("final_state"))
+            fields['xyz'][i+1] = Y_current
+            fl.flush()
+            
+            if (i+1) % 100 == 0:
+                print(f"Completed time step {i+1}/{self.Nt-1}, t = {t + self.dtstep:.3f}")
         
-        print(f"Solution saved to {os.path.join(self.datadir, 'data.h5')}")
         return Y_current
