@@ -49,30 +49,31 @@ class GenSolver:
         # Calculate number of save points
         Nsave = int((self.t1 - self.t0)/self.dtsave) + 1
         
-        # Calculate save times outside of the h5.File context
-        t_save = np.linspace(self.t0, self.t1, Nsave)
-
         # Calculate number of solver steps
         Nt = int((self.t1 - self.t0)/self.dtstep) + 1
         
         # Create HDF5 file
         with h5.File(os.path.join(self.datadir, 'data.h5'), 'w') as fl:
             fields = fl.create_group('fields')
-            fields.create_dataset('t', data=t_save)
+            # Create empty datasets will be filled incrementally
+            fields.create_dataset('t', shape=(Nsave,), dtype=np.float64)
             fields.create_dataset('xyz', shape=(Nsave, len(self.initial_condition)), dtype=np.float64)
+            
+            # Set initial values at index 0
+            fields['t'][0] = self.t0
             fields['xyz'][0] = Y_current
             
             # Time stepping loop
             next_save_idx = 1  # Index for the next save point
             next_save_time = self.t0 + self.dtsave  # Time for the next save
             
+            # Using range(Nt) instead of range(Nt-1)
             for i in range(Nt-1):
                 t = self.t0 + i * self.dtstep
                 t_next = t + self.dtstep
-                tspan_current = (t, t_next)
                 
                 # Pass current state to Julia
-                jl.tspan = tspan_current
+                jl.tspan = (t, t_next)
                 jl.Y_current = Y_current
                 
                 # Solve one time step
@@ -88,6 +89,7 @@ class GenSolver:
                 
                 # Save data when we reach a save time (exact match)
                 if t_next == next_save_time:
+                    fields['t'][next_save_idx] = t_next
                     fields['xyz'][next_save_idx] = Y_current
                     fl.flush()
                     next_save_idx += 1
