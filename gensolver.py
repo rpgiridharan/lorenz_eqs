@@ -16,10 +16,11 @@ class GenSolver:
             initial_condition (array): Initial state.
             t1 (float): End time.
             **kwargs: Additional parameters:
-            - dtstep: Time step for solver integration.
-            - dtsave: Time step for data saving (can be different from dtstep).
+            - dtsave: Time step for data saving and printing.
             - datadir: Directory for data storage.
             - params: Parameters for the RHS function.
+            - atol: Absolute tolerance for the solver.
+            - rtol: Relative tolerance for the solver.
         """
         self.solver_type = solver_type
         self.rhs = rhs
@@ -28,76 +29,110 @@ class GenSolver:
         self.initial_condition = initial_condition
         
         # Set defaults for optional parameters
-        self.dtstep = kwargs.get('dtstep', 0.01)
         self.dtsave = kwargs.get('dtsave', 0.05)
         self.datadir = kwargs.get('datadir', 'data/')
         self.params = kwargs.get('params', {})
+        self.atol = kwargs.get('atol', 1e-6)
+        self.rtol = kwargs.get('rtol', 1e-3)
+        
+        # Create HDF5 file
+        self.fl = None
+        self.fields = None
+        self.save_idx = 0
+        self.Nsave = int((self.t1 - self.t0)/self.dtsave) + 1
+        
+    def _initialize_storage(self):
+        """Initialize HDF5 storage for simulation results"""
+        self.fl = h5.File(os.path.join(self.datadir, 'data.h5'), 'w')
+        self.fields = self.fl.create_group('fields')
+        self.fields.create_dataset('t', shape=(self.Nsave,), dtype=np.float64)
+        self.fields.create_dataset('xyz', shape=(self.Nsave, len(self.initial_condition)), 
+                                  dtype=np.float64)
+        # Set initial values
+        self.save_idx = 0
+            
+    def save_state(self, t, u):
+        """Save the current state - called by Julia callback"""
+        if self.save_idx < self.Nsave:
+            self.fields['t'][self.save_idx] = t
+            self.fields['xyz'][self.save_idx] = u
+            self.fl.flush()
+            print(f"Saved at t = {t:.3f}, point {self.save_idx}/{self.Nsave-1}")
+            self.save_idx += 1
+            return True
+        return False
 
     def run(self):
-        """Run the simulation"""
-        # Setup Julia environment and functions - now with correct argument order
+        """Run the simulation using Julia's callback for saving"""
+        # Initialize storage
+        self._initialize_storage()
+        
+        # Initialize Julia environment
         jl.rhs_py = lambda dy, y, p, t: self.rhs(dy, y, self.params, t)
+        
+        # Create Python callback that will be called from Julia
+        jl.py_save_callback = self.save_state
+        
+        # Pass parameters to Julia
+        jl.dtsave = self.dtsave
+        jl.atol = self.atol
+        jl.rtol = self.rtol
+        jl.solver_type = self.solver_type
         
         jl.seval("""
         using DifferentialEquations
         using PythonCall
         """)
         
-        # Initialize solution storage
-        Y_current = self.initial_condition
+        # Setup callback for saving at fixed intervals
+        jl.seval("""
+        # Create a periodic callback that will trigger exactly at the specified intervals
+        saveat_cb = PeriodicCallback(dtsave) do integrator
+            # Save the current state
+            py_save_callback(integrator.t, integrator.u)
+        end
         
-        # Calculate number of save points
-        Nsave = int((self.t1 - self.t0)/self.dtsave) + 1
+        # We also need a callback for the initial point
+        function init_save_affect!(integrator)
+            py_save_callback(integrator.t, integrator.u)
+        end
         
-        # Calculate number of solver steps
-        Nt = int((self.t1 - self.t0)/self.dtstep) + 1
+        # Callback that triggers at the beginning
+        init_cb = DiscreteCallback(
+            (u, t, integrator) -> t == integrator.sol.prob.tspan[1], 
+            init_save_affect!,
+            save_positions=(false, false)
+        )
         
-        # Create HDF5 file
-        with h5.File(os.path.join(self.datadir, 'data.h5'), 'w') as fl:
-            fields = fl.create_group('fields')
-            # Create empty datasets will be filled incrementally
-            fields.create_dataset('t', shape=(Nsave,), dtype=np.float64)
-            fields.create_dataset('xyz', shape=(Nsave, len(self.initial_condition)), dtype=np.float64)
-            
-            # Set initial values at index 0
-            fields['t'][0] = self.t0
-            fields['xyz'][0] = Y_current
-            
-            # Time stepping loop
-            next_save_idx = 1  # Index for the next save point
-            next_save_time = self.t0 + self.dtsave  # Time for the next save
-            
-            # Using range(Nt) instead of range(Nt-1)
-            for i in range(Nt-1):
-                t = self.t0 + i * self.dtstep
-                t_next = t + self.dtstep
-                
-                # Pass current state to Julia
-                jl.tspan = (t, t_next)
-                jl.Y_current = Y_current
-                
-                # Solve one time step
-                jl.seval(f"""
-                Y0_current = pyconvert(Vector{{Float64}}, Y_current)
-                prob = ODEProblem(rhs_py, Y0_current, tspan, nothing)
-                sol = solve(prob, {self.solver_type}())
-                final_state = sol.u[end]
-                """)
-                
-                # Get solution
-                Y_current = np.array(jl.seval("final_state"))
-                
-                # Save data when we reach a save time (exact match)
-                if t_next == next_save_time:
-                    fields['t'][next_save_idx] = t_next
-                    fields['xyz'][next_save_idx] = Y_current
-                    fl.flush()
-                    next_save_idx += 1
-                    next_save_time = self.t0 + next_save_idx * self.dtsave
-                    print(f"Saved at t = {t_next:.3f}, point {next_save_idx-1}/{Nsave-1}")
-                
-                if (i+1) % 100 == 0:
-                    print(f"Completed time step {i+1}/{Nt-1}, t = {t_next:.3f}")
+        # Combine callbacks into a callback set
+        cb_set = CallbackSet(init_cb, saveat_cb)
+        """)
+        
+        # Set the initial condition and solve
+        jl.Y_current = self.initial_condition
+        jl.t0 = self.t0
+        jl.t1 = self.t1
+        
+        jl.seval("""
+        tspan = (t0, t1)
+        prob = ODEProblem(rhs_py, Y_current, tspan, nothing)
+        
+        # Select solver based on solver_type
+        solver = getproperty(Main, Symbol(solver_type))()
+        
+        # Solve with callback and specified tolerances
+        sol = solve(prob, solver, callback=cb_set, 
+                  save_everystep=false, save_start=false, save_end=false,
+                  abstol=atol, reltol=rtol)
+                  
+        final_state = sol.u[end]
+        """)
+        
+        # Get final state
+        final_state = np.array(jl.seval("final_state"))
+        
+        # Close the HDF5 file
+        self.fl.close()
         
         print(f"Solution saved to {os.path.join(self.datadir, 'data.h5')}")
-        return Y_current
+        return final_state
