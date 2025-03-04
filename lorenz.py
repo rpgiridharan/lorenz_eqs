@@ -14,7 +14,8 @@ os.makedirs(imdir, exist_ok=True)
 # Time parameters
 t0 = 0.0
 t1 = 50.0
-dtstep = 0.01
+dtstep = 0.01  # Time step for solver
+dtsave = 0.05  # Time step for saving data
 
 # System parameters
 params = {
@@ -23,20 +24,19 @@ params = {
     'beta': 8/3
 }
 
-# Define the RHS function for Lorenz equations
-def rhs(Y, p, t):
+# Define the RHS function for Lorenz equations (in-place modification for Julia compatibility)
+def rhs(dY, Y, params, t):
     x, y, z = Y
-    dx = params['sigma'] * (y - x)
-    dy = x * (params['rho'] - z) - y
-    dz = x * y - params['beta'] * z
-    return np.array([dx, dy, dz], dtype=np.float64)
+    dY[0] = params['sigma'] * (y - x)
+    dY[1] = x * (params['rho'] - z) - y
+    dY[2] = x * y - params['beta'] * z
 
 # Initial conditions
 initial_condition = np.array([1.0, 1.0, 1.0])
 
 #%% Solve system
 solver = GenSolver('Tsit5', rhs, t0, initial_condition, t1,
-                  dtstep=dtstep, datadir=datadir, imdir=imdir,
+                  dtstep=dtstep, dtsave=dtsave, datadir=datadir,
                   params=params)
 final_state = solver.run()
 
