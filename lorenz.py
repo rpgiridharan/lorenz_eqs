@@ -67,8 +67,8 @@ class GenSolver:
         self.dtsave = kwargs.get('dtsave', 0.05)
         self.datadir = kwargs.get('datadir', 'data/')
         self.params = kwargs.get('params', {})
-        self.atol = kwargs.get('atol', 1e-6)
-        self.rtol = kwargs.get('rtol', 1e-3)
+        self.atol = kwargs.get('atol', 1e-7)
+        self.rtol = kwargs.get('rtol', 1e-4)
         
         # Create HDF5 file
         self.fl = None
