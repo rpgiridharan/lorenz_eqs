@@ -6,8 +6,8 @@ import os
 
 #%% Define parameters
 # Create directories
-datadir = "data/"
-imdir = "images/"
+datadir = "./"
+imdir = "./"
 os.makedirs(datadir, exist_ok=True)
 os.makedirs(imdir, exist_ok=True)
 
