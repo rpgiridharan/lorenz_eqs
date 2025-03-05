@@ -76,7 +76,7 @@ class GenSolver:
         self.save_idx = 0
         self.Nsave = int((self.t1 - self.t0)/self.dtsave) + 1
         
-    def _initialize_storage(self):
+    def initialize_storage(self):
         """Initialize HDF5 storage for simulation results"""
         self.fl = h5.File(os.path.join(self.datadir, 'data.h5'), 'w')
         self.fields = self.fl.create_group('fields')
@@ -100,7 +100,7 @@ class GenSolver:
     def run(self):
         """Run the simulation using Julia's callback for saving"""
         # Initialize storage
-        self._initialize_storage()
+        self.initialize_storage()
         
         # Initialize Julia environment
         jl.rhs_py = lambda dy, y, p, t: self.rhs(dy, y, self.params, t)
